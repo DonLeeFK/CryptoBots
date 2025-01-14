@@ -1,0 +1,31 @@
+name: Update Trading Signals
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # Run every hour (adjust as needed)
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  update-signals:
+    runs-on: macos-13
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      
+
+    - name: Install dependencies
+      run: pip install -r requirements.txt  
+
+    - name: Run script to generate signals
+      run: python macd_divergance.py  # Replace your_script_name.py
+
+    - name: Commit and push changes
+      uses: EndBug/add-and-commit@v9
+      with:
+        add: 'trading_signals.png'  # Commit the generated image
+        message: 'Update trading signals image'
+        push: true
