@@ -23,7 +23,7 @@ jobs:
       run: pip install -r requirements.txt  
 
     - name: Run script to generate signals
-      run: python macd_divergance.py  # Replace your_script_name.py
+      run: python macd_divergence.py  # Replace your_script_name.py
 
     - name: Commit and push changes
       uses: EndBug/add-and-commit@v9
