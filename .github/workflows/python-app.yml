@@ -2,8 +2,8 @@ name: Update Trading Signals
 
 on:
   schedule:
-    - cron: '0 * * * *'  # Run every hour (adjust as needed)
-  workflow_dispatch:  # Allow manual trigger
+    - cron: '0 8 * * *'  
+  workflow_dispatch:  
 
 jobs:
   update-signals:
