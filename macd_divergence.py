@@ -2,20 +2,21 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.signal import argrelextrema
 
 # Trading parameters
 ticker = "BTC-USD"
 period = "1mo"
 interval = "1h"
-macd_fast = 13
-macd_slow = 34
+macd_fast = 12
+macd_slow = 26
 macd_signal = 9
-lookback_period = 240
+lookback_period = 144
 atr_period = 14
-divergence_threshold = 0  
+divergence_threshold = 0
 rsi_period = 13
 rsi_oversold = 30
-rsi_overbought = 80
+rsi_overbought = 70
 
 def calculate_macd(data, fast, slow, signal):
     """Calculates MACD, signal line, and histogram."""
@@ -47,56 +48,103 @@ def calculate_rsi(data, period):
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
+def find_histogram_peaks(histogram):
+    peak_indices = []
+
+    # Pad the histogram with zeros at the beginning and end for edge cases
+    padded_histogram = np.pad(histogram.values, (1, 1), 'constant', constant_values=(0, 0))
+
+    # Find indices where the histogram crosses zero
+    zero_crossings = np.where(np.diff(np.signbit(padded_histogram)))[0]
+    #print(f'number of sections: {len(zero_crossings)}')
+
+    # Iterate through each section and find the maximum or minimum
+    for i in range(len(zero_crossings) - 1):
+        start = zero_crossings[i]
+        end = zero_crossings[i+1]
+        section = histogram.iloc[start:end]
+
+        if not section.empty:
+            if section.iloc[0] >= 0:  # Positive section
+                peak_index = section.idxmax()
+            else:  # Negative section
+                peak_index = section.idxmin()
+
+            peak_indices.append(peak_index)
+
+    return pd.Series(peak_indices)
+
 def detect_divergence(data, macd, signal_line, histogram, lookback, threshold):
-    """Detects regular bullish and bearish divergences with a threshold."""
+    """Detects regular and hidden bullish/bearish divergences with a threshold."""
     price = data['Close']
 
     divergence = 'none'
 
-    # Identify recent swing highs/lows in price
-    price_lows_idx = price.iloc[-lookback:].nsmallest(2).index
-    price_highs_idx = price.iloc[-lookback:].nlargest(2).index
+    peak_indices = find_histogram_peaks(histogram)
+    histogram_peaks = histogram.loc[peak_indices]
+    histogram_maxima = histogram_peaks[histogram_peaks > 0]
+    histogram_minima = histogram_peaks[histogram_peaks < 0]
 
-    # Sort index to maintain chronological order
-    price_lows_idx = price_lows_idx.sort_values()
-    price_highs_idx = price_highs_idx.sort_values()
-    histogram_highs = histogram.loc[price_highs_idx]
-    histogram_lows = histogram.loc[price_lows_idx]
+    # Iterate through all pairs of sequential histogram maxima for bearish divergences
+    if len(histogram_maxima) >= 2:
+        for i in range(len(histogram_maxima)):
+            for j in range(i + 1, len(histogram_maxima)):
+                # Corresponding price points for histogram maxima
+                price_maxima = price.loc[histogram_maxima.index]
 
-    # Check price trend and corresponding histogram
-    if price_lows_idx[1] > price_lows_idx[0]:
-        # Regular Bullish Divergence
-        if price[price_lows_idx[1]] < price[price_lows_idx[0]]:  # Lower low in price
-            #histogram_lows = histogram.loc[price_lows_idx]
-            if histogram_lows.iloc[1] > histogram_lows.iloc[0]:  # Higher low in histogram
-                # Check if divergence meets the threshold
-                price_diff = (price[price_lows_idx[0]] - price[price_lows_idx[1]]) / price[price_lows_idx[1]]
-                histogram_diff = (histogram_lows.iloc[1] - histogram_lows.iloc[0]) / histogram_lows.iloc[0]
-                if price_diff > threshold and histogram_diff > threshold:
-                    divergence = 'regular_bullish'
-            if histogram_highs.iloc[1] > histogram_highs.iloc[0]:  # Higher high in histogram
-                # Check if divergence meets the threshold
-                price_diff = (price[price_lows_idx[0]] - price[price_lows_idx[1]]) / price[price_lows_idx[1]]
-                histogram_diff = (histogram_highs.iloc[0] - histogram_highs.iloc[1]) / histogram_highs.iloc[1]
-                if price_diff > threshold and histogram_diff > threshold:
-                    divergence = 'hidden_bullish'   
+                # Regular Bearish Divergence
+                if price_maxima.iloc[j] > price_maxima.iloc[i]:  # Higher high in price
+                    if histogram_maxima.iloc[j] < histogram_maxima.iloc[i]:  # Lower high in histogram
+                        price_diff = abs((price_maxima.iloc[j] - price_maxima.iloc[i]) / price_maxima.iloc[i])
+                        histogram_diff = abs((histogram_maxima.iloc[i] - histogram_maxima.iloc[j]) / histogram_maxima.iloc[j])
+                        if price_diff > threshold and histogram_diff > threshold:
+                            divergence = 'regular_bearish'
+                            break
 
-    if price_highs_idx[1] > price_highs_idx[0]:
-        # Regular Bearish Divergence
-        if price[price_highs_idx[1]] > price[price_highs_idx[0]]:  # Higher high in price
-            #histogram_highs = histogram.loc[price_highs_idx]
-            if histogram_highs.iloc[1] < histogram_highs.iloc[0]:  # Lower high in histogram
-                # Check if divergence meets the threshold
-                price_diff = (price[price_highs_idx[1]] - price[price_highs_idx[0]]) / price[price_highs_idx[0]]
-                histogram_diff = (histogram_highs.iloc[0] - histogram_highs.iloc[1]) / histogram_highs.iloc[1]
-                if price_diff > threshold and histogram_diff > threshold:
-                    divergence = 'regular_bearish'
-            if histogram_lows.iloc[1] < histogram_lows.iloc[0]:  # Lower low in histogram
-                # Check if divergence meets the threshold
-                price_diff = (price[price_highs_idx[1]] - price[price_highs_idx[0]]) / price[price_highs_idx[0]]
-                histogram_diff = (histogram_lows.iloc[1] - histogram_lows.iloc[0]) / histogram_lows.iloc[0]
-                if price_diff > threshold and histogram_diff > threshold:
-                    divergence = 'hidden_bearish'
+                # Hidden Bearish Divergence
+                if price_maxima.iloc[j] < price_maxima.iloc[i]:  # Lower high in price
+                    if histogram_maxima.iloc[j] > histogram_maxima.iloc[i]:  # Higher high in histogram
+                        price_diff = abs((price_maxima.iloc[i] - price_maxima.iloc[j]) / price_maxima.iloc[j])
+                        histogram_diff = abs((histogram_maxima.iloc[j] - histogram_maxima.iloc[i]) / histogram_maxima.iloc[i])
+                        if price_diff > threshold and histogram_diff > threshold:
+                            divergence = 'hidden_bearish'
+                            break
+            if divergence != 'none':
+                break
+
+    if divergence != 'none':
+        return divergence
+
+    # Iterate through all pairs of sequential histogram minima for bullish divergences
+    if len(histogram_minima) >= 2:
+        for i in range(len(histogram_minima)):
+            for j in range(i + 1, len(histogram_minima)):
+                # Corresponding price points for histogram minima
+                price_minima = price.loc[histogram_minima.index]
+
+                # Regular Bullish Divergence
+                if price_minima.iloc[j] < price_minima.iloc[i]:  # Lower low in price
+                    #print("test1")
+                    if histogram_minima.iloc[j] > histogram_minima.iloc[i]:  # Higher low in histogram
+                        #print("test2")
+                        #divergence = 'regular_bullish'
+                        #break
+                        price_diff = abs((price_minima.iloc[i] - price_minima.iloc[j]) / price_minima.iloc[j])
+                        histogram_diff = abs((histogram_minima.iloc[j] - histogram_minima.iloc[i]) / histogram_minima.iloc[i])
+                        if price_diff > threshold and histogram_diff > threshold:
+                            divergence = 'regular_bullish'
+                            break
+
+                # Hidden Bullish Divergence
+                if price_minima.iloc[j] > price_minima.iloc[i]:  # Higher low in price
+                    if histogram_minima.iloc[j] < histogram_minima.iloc[i]:  # Lower low in histogram
+                        price_diff = abs((price_minima.iloc[j] - price_minima.iloc[i]) / price_minima.iloc[i])
+                        histogram_diff = abs((histogram_minima.iloc[i] - histogram_minima.iloc[j]) / histogram_minima.iloc[j])
+                        if price_diff > threshold and histogram_diff > threshold:
+                            divergence = 'hidden_bullish'
+                            break
+            if divergence != 'none':
+                break
 
     return divergence
 
@@ -121,18 +169,20 @@ def plot_signals(data):
 
         if divergence in ('regular_bullish', 'hidden_bullish'):
             active_divergence = 'bullish'
+            #print(f'Bullish Divergence detected at {timestamp} with price {current_price} and histogram {current_histogram}')
         elif divergence in ('regular_bearish', 'hidden_bearish'):
             active_divergence = 'bearish'
+            #print(f'Bearish Divergence detected at {timestamp} with price {current_price} and histogram {current_histogram}')
 
         if active_divergence == 'bullish':
             # Check for MACD histogram and RSI conditions for open long
-            if current_histogram < 0 and current_histogram > prev_histogram:# and current_rsi < rsi_oversold:
+            if current_histogram < 0 and current_histogram > prev_histogram and current_rsi < rsi_oversold:
                 open_long_signals.append((timestamp, current_price))
                 active_divergence = None  # Reset active divergence after signal
 
         elif active_divergence == 'bearish':
             # Check for MACD histogram and RSI conditions for open short
-            if current_histogram > 0 and current_histogram < prev_histogram:# and current_rsi > rsi_overbought:
+            if current_histogram > 0 and current_histogram < prev_histogram and current_rsi > rsi_overbought:
                 open_short_signals.append((timestamp, current_price))
                 active_divergence = None  # Reset active divergence after signal
 
