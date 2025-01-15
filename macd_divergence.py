@@ -14,8 +14,8 @@ lookback_period = 144
 atr_period = 14
 divergence_threshold = 0
 rsi_period = 13
-rsi_oversold = 30
-rsi_overbought = 70
+rsi_oversold = 20
+rsi_overbought = 80
 
 def calculate_macd(data, fast, slow, signal):
     """Calculates MACD, signal line, and histogram."""
