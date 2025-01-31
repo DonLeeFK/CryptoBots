@@ -7,7 +7,7 @@ on:
 
 jobs:
   update-signals:
-    runs-on: macos-13
+    runs-on: ubantu-latest
     
     steps:
     - name: Checkout code
